@@ -1,0 +1,15 @@
+{
+  "name": "steganography_web",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "steganography_web_bg.wasm",
+    "steganography_web.js",
+    "steganography_web.d.ts"
+  ],
+  "main": "steganography_web.js",
+  "types": "steganography_web.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
