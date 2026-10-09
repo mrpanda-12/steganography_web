@@ -3,7 +3,7 @@ import init, {
     decode_text_browser,
     encode_image_browser,
     decode_image_browser
-} from "./pkg/steganoraphy_web.js";
+} from "./pkg/steganography_web.js";
 
 const byId = (id) => document.getElementById(id);
 
