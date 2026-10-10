@@ -2,7 +2,8 @@ name: Deploy Website to GitHub Pages
 
 on:
   push:
-    branches: [master]
+    branches:
+      - master
   workflow_dispatch:
 
 permissions:
@@ -19,6 +20,7 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     runs-on: ubuntu-latest
 
     steps:
@@ -30,11 +32,12 @@ jobs:
           mkdir -p _site
           cp -r website/. _site/
           cp -r pkg _site/pkg
+          sed -i 's#../pkg/steganography_web.js#./pkg/steganography_web.js#' _site/app.js
 
-      - name: Configure Pages
+      - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Upload website
+      - name: Upload website artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: _site
