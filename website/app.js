@@ -284,22 +284,29 @@ async function showImage(pixels, width, height, filename, title, caption) {
 }
 
 function readHiddenDimensions(pixels) {
-    // The Rust image format stores width and height in the red-channel LSBs of
-    // the first 64 carrier pixels: 32 pixels for each 32-bit dimension.
-    if (pixels.length < 64 * 4) throw new Error("This image is too small to contain an image header.");
+    // The Rust image format stores width and height in the first 22 carrier pixels
+    // using 3 bits per pixel (RGB): 64 bits total, 32 bits for width, 32 bits for height.
+    const minPixels = 22;
+    if (pixels.length < minPixels * 4) throw new Error("This image is too small to contain an image header.");
 
-    function readHeaderByte(startPixel) {
+    function readBit(bitIndex) {
+        const pixelIndex = Math.floor(bitIndex / 3);
+        const channel = bitIndex % 3;
+        return pixels[(pixelIndex * 4) + channel] & 1;
+    }
+
+    function readByte(startBit) {
         let byte = 0;
-        for (let bit = 0; bit < 8; bit += 1) {
-            byte = (byte << 1) | (pixels[(startPixel + bit) * 4] & 1);
+        for (let i = 0; i < 8; i += 1) {
+            byte = (byte << 1) | readBit(startBit + i);
         }
         return byte;
     }
 
-    function readU32(startPixel) {
+    function readU32(startBit) {
         let value = 0;
-        for (let byte = 0; byte < 4; byte += 1) {
-            value = value * 256 + readHeaderByte(startPixel + byte * 8);
+        for (let b = 0; b < 4; b += 1) {
+            value = value * 256 + readByte(startBit + b * 8);
         }
         return value;
     }
@@ -307,7 +314,7 @@ function readHiddenDimensions(pixels) {
     const width = readU32(0);
     const height = readU32(32);
     const pixelCount = width * height;
-    const availableSecretPixels = Math.floor((pixels.length / 4 - 64) / 8);
+    const availableSecretPixels = Math.floor((pixels.length / 4 - minPixels) / 8);
     if (!width || !height || !Number.isSafeInteger(pixelCount) || pixelCount > availableSecretPixels) {
         throw new Error("The hidden image dimensions are invalid or the PNG is damaged.");
     }
@@ -315,10 +322,10 @@ function readHiddenDimensions(pixels) {
 }
 
 async function fitSecretImage(secret, carrier, shouldScale) {
-    // The current Rust format needs 64 carrier pixels for dimensions and eight
+    // The current Rust format needs 22 carrier pixels for dimensions and eight
     // carrier pixels for each secret pixel. Scale only if that capacity is exceeded.
     const carrierPixels = carrier.width * carrier.height;
-    const maxSecretPixels = Math.floor((carrierPixels - 64) / 8);
+    const maxSecretPixels = Math.floor((carrierPixels - 22) / 8);
     if (maxSecretPixels < 1) throw new Error("The carrier image is too small to store a secret image.");
 
     const secretPixels = secret.width * secret.height;
