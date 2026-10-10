@@ -3,12 +3,15 @@ import init, {
     decode_text_browser,
     encode_image_browser,
     decode_image_browser
-} from "./pkg/steganography_web.js";
+} from "../pkg/steganography_web.js";
+
+import { t, applyTranslations } from "./i18n.js";
+
+// ─── Main Application ───────────────────────────────────────────────────────
 
 const byId = (id) => document.getElementById(id);
 
 const app = byId("app");
-const layoutSelect = byId("layout");
 const modeTabs = [...document.querySelectorAll("#tabs [data-mode]")];
 const actionTabs = [...document.querySelectorAll(".action-tabs [data-action]")];
 const panels = [...document.querySelectorAll(".mode-panel")];
@@ -20,29 +23,25 @@ const preview = byId("preview");
 const previewContext = preview.getContext("2d");
 const download = byId("download");
 const decodedText = byId("decoded-text");
+const textCapacity = byId("text-capacity");
+const imageCapacity = byId("image-capacity");
 
 let currentMode = "text";
 let currentAction = "encode";
 let downloadUrl = null;
 let modeVersion = 0;
 let isWorking = false;
+let carrierCapacity = null; // { maxTextBytes, maxSecretPixels }
+let secretImagePixels = null;
 
 // Initialise WASM after the page controls have been wired up. A failed WASM load
 // should not affect the separate theme switch in index.html.
 const wasmReady = init().catch((error) => {
-    setStatus("The Rust/WASM module could not load. Run wasm-pack build --target web and serve this folder over HTTP.", "error");
+    setStatus(t("wasmError"), "error");
     throw error;
 });
 // Avoid an unhandled rejection while keeping the original error available to operations.
 wasmReady.catch(() => {});
-
-// Keep the tab layout in one place so changing the selector cannot reset the active mode.
-layoutSelect.addEventListener("change", () => {
-    const position = ["top", "bottom", "left", "right"].includes(layoutSelect.value)
-        ? layoutSelect.value
-        : "top";
-    app.className = `layout-${position}`;
-});
 
 modeTabs.forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -77,23 +76,124 @@ function renderMode() {
     panels.forEach((panel) => { panel.hidden = panel.id !== activePanel; });
     clearOutput();
     setStatus(currentAction === "encode"
-        ? "Choose the image that will hold your data."
-        : "Choose the PNG that contains the hidden data.");
+        ? t("encodeStart")
+        : t("decodeStart"));
 }
 
 // Reflect each file selection in the input itself and discard any stale result.
 [
-    ["text-encode-carrier", "Carrier image selected."],
-    ["text-decode-carrier", "Encoded PNG selected."],
-    ["image-encode-carrier", "Carrier image selected."],
-    ["secret-image", "Secret image selected."],
-    ["image-decode-carrier", "Encoded PNG selected."]
-].forEach(([inputId, message]) => {
-    byId(inputId).addEventListener("change", () => {
+    ["text-encode-carrier", "carrierSelected"],
+    ["text-decode-carrier", "encodedSelected"],
+    ["image-encode-carrier", "carrierSelected"],
+    ["image-decode-carrier", "encodedSelected"]
+].forEach(([inputId, messageKey]) => {
+    byId(inputId).addEventListener("change", async () => {
         clearOutput();
-        if (byId(inputId).files?.[0]) setStatus(message);
+        const fileInput = byId(inputId);
+        if (fileInput.files?.[0]) {
+            setStatus(t(messageKey));
+            // Calculate capacity when a carrier image is selected
+            if (inputId === "text-encode-carrier" || inputId === "image-encode-carrier") {
+                try {
+                    const carrier = await readImage(fileInput);
+                    const carrierPixels = carrier.width * carrier.height;
+                    // Text: 3 bits per pixel, 32-bit header for length, 8 bits per byte
+                    const maxTextBytes = Math.max(0, Math.floor((carrierPixels * 3 - 32) / 8));
+                    // Image: 22 carrier pixels for dimension header (3 bits/pixel RGB), 8 carrier pixels per secret pixel
+                    const maxSecretPixels = Math.max(0, Math.floor((carrierPixels - 22) / 8));
+                    carrierCapacity = { maxTextBytes, maxSecretPixels };
+                    updateTextCapacity();
+                    updateImageCapacity(secretImagePixels);
+                } catch {
+                    carrierCapacity = null;
+                    textCapacity.textContent = t("uploadImage");
+                    textCapacity.removeAttribute("data-over");
+                    imageCapacity.textContent = t("uploadImage");
+                    imageCapacity.removeAttribute("data-over");
+                }
+            }
+        } else {
+            carrierCapacity = null;
+            textCapacity.textContent = t("uploadImage");
+            textCapacity.removeAttribute("data-over");
+            imageCapacity.textContent = t("uploadImage");
+            imageCapacity.removeAttribute("data-over");
+        }
     });
 });
+
+// Secret image handler - also updates capacity comparison
+byId("secret-image").addEventListener("change", async () => {
+    clearOutput();
+    const fileInput = byId("secret-image");
+    if (fileInput.files?.[0]) {
+        setStatus(t("secretSelected"));
+        try {
+            const secret = await readImage(fileInput);
+            secretImagePixels = secret.width * secret.height;
+            updateImageCapacity(secretImagePixels);
+        } catch {
+            secretImagePixels = null;
+            updateImageCapacity(null);
+        }
+    } else {
+        secretImagePixels = null;
+        updateImageCapacity(null);
+    }
+});
+
+// Live character count for the text encode textarea
+byId("secret-text").addEventListener("input", updateTextCapacity);
+
+// Toggle downscale warning visibility when the checkbox changes
+const downscaleWarning = byId("downscale-warning");
+const scaleSecret = byId("scale-secret");
+function updateDownscaleWarning() {
+    downscaleWarning.hidden = !scaleSecret.checked;
+}
+scaleSecret.addEventListener("change", updateDownscaleWarning);
+updateDownscaleWarning();
+
+function updateTextCapacity() {
+    if (!carrierCapacity) {
+        textCapacity.textContent = t("uploadImage");
+        textCapacity.removeAttribute("data-over");
+        return;
+    }
+    textCapacity.dataset.capacitySet = "1";
+    const bytes = new TextEncoder().encode(byId("secret-text").value).length;
+    const remaining = carrierCapacity.maxTextBytes - bytes;
+    if (remaining >= 0) {
+        textCapacity.textContent = `${bytes} / ${carrierCapacity.maxTextBytes} bytes`;
+        textCapacity.dataset.over = "false";
+    } else {
+        textCapacity.textContent = `${bytes} / ${carrierCapacity.maxTextBytes} bytes (${Math.abs(remaining)} over)`;
+        textCapacity.dataset.over = "true";
+    }
+}
+
+function updateImageCapacity(secretPixels) {
+    if (!carrierCapacity) {
+        imageCapacity.textContent = t("uploadImage");
+        imageCapacity.removeAttribute("data-over");
+        return;
+    }
+    imageCapacity.dataset.capacitySet = "1";
+    // Show max dimensions as a square root approximation
+    const maxDim = Math.floor(Math.sqrt(carrierCapacity.maxSecretPixels));
+    let text = `Max: ${maxDim}×${maxDim} (${carrierCapacity.maxSecretPixels.toLocaleString()} pixels)`;
+    if (secretPixels) {
+        text += ` · Secret: ${secretPixels.toLocaleString()} pixels`;
+        if (secretPixels > carrierCapacity.maxSecretPixels) {
+            imageCapacity.dataset.over = "true";
+        } else {
+            imageCapacity.dataset.over = "false";
+        }
+    } else {
+        imageCapacity.dataset.over = "false";
+    }
+    imageCapacity.textContent = text;
+}
 
 function setStatus(message, kind = "") {
     status.textContent = message;
@@ -110,6 +210,15 @@ function clearOutput() {
     preview.height = 0;
     result.hidden = true;
     decodedText.value = "";
+    // Reset capacity display when switching modes
+    carrierCapacity = null;
+    secretImagePixels = null;
+    textCapacity.textContent = t("uploadImage");
+    textCapacity.removeAttribute("data-over");
+    textCapacity.removeAttribute("data-capacity-set");
+    imageCapacity.textContent = t("uploadImage");
+    imageCapacity.removeAttribute("data-over");
+    imageCapacity.removeAttribute("data-capacity-set");
 }
 
 function isCurrentView(version) {
@@ -215,7 +324,7 @@ async function fitSecretImage(secret, carrier, shouldScale) {
     const secretPixels = secret.width * secret.height;
     if (secretPixels <= maxSecretPixels) return secret;
     if (!shouldScale) {
-        throw new Error("The secret image is too large. Enable ‘Scale down to fit’ or choose a smaller image.");
+        throw new Error("The secret image is too large. Enable 'Scale down to fit' or choose a smaller image.");
     }
 
     const ratio = secret.width / secret.height;
@@ -275,29 +384,29 @@ async function perform(operation) {
 }
 
 byId("encode-text").addEventListener("click", () => perform(async (version) => {
-    setStatus("Encoding message…");
+    setStatus(t("encodingText"));
     const carrier = await readImage(byId("text-encode-carrier"));
     if (!isCurrentView(version)) return;
     const pixels = encode_text_browser(byId("secret-text").value, carrier.pixels, carrier.width, carrier.height);
     await showImage(
         pixels, carrier.width, carrier.height,
-        "encoded-text.png", "Encoded image",
-        "The message is hidden in this PNG. Keep the file as PNG so its hidden bits are preserved."
+        "encoded-text.png", t("result"),
+        t("encodedTextCaption")
     );
-    if (isCurrentView(version)) setStatus("Message encoded. Download the PNG to preserve the hidden data.", "success");
+    if (isCurrentView(version)) setStatus(t("textSuccess"), "success");
 }));
 
 byId("decode-text").addEventListener("click", () => perform(async (version) => {
-    setStatus("Decoding message…");
+    setStatus(t("decodingText"));
     const carrier = await readImage(byId("text-decode-carrier"), false);
     if (!isCurrentView(version)) return;
     const message = decode_text_browser(carrier.pixels, carrier.width, carrier.height);
     decodedText.value = message;
-    setStatus(message.length ? "Message decoded." : "Message decoded. The hidden message is empty.", "success");
+    setStatus(message.length ? t("textDecoded") : t("textDecodedEmpty"), "success");
 }));
 
 byId("encode-image").addEventListener("click", () => perform(async (version) => {
-    setStatus("Encoding image…");
+    setStatus(t("encodingImage"));
     const carrier = await readImage(byId("image-encode-carrier"));
     const originalSecret = await readImage(byId("secret-image"));
     if (!isCurrentView(version)) return;
@@ -308,30 +417,76 @@ byId("encode-image").addEventListener("click", () => perform(async (version) => 
         secret.pixels, secret.width, secret.height,
         carrier.pixels, carrier.width, carrier.height
     );
+    const caption = t("encodedImageCaption").replace("{w}", secret.width).replace("{h}", secret.height);
     await showImage(
         pixels, carrier.width, carrier.height,
-        "encoded-image.png", "Encoded image",
-        `Secret image stored at ${secret.width} × ${secret.height} pixels. Download the PNG to preserve the hidden data.`
+        "encoded-image.png", t("result"),
+        caption
     );
-    if (isCurrentView(version)) setStatus("Image encoded. Download the PNG to preserve the hidden data.", "success");
+    if (isCurrentView(version)) setStatus(t("imageSuccess"), "success");
 }));
 
 byId("decode-image").addEventListener("click", () => perform(async (version) => {
-    setStatus("Decoding hidden image…");
+    setStatus(t("decodingImage"));
     const carrier = await readImage(byId("image-decode-carrier"), false);
     if (!isCurrentView(version)) return;
     const dimensions = readHiddenDimensions(carrier.pixels);
     const pixels = decode_image_browser(carrier.pixels, carrier.width, carrier.height);
+    const caption = t("decodedImageCaption").replace("{w}", dimensions.width).replace("{h}", dimensions.height);
     await showImage(
         pixels, dimensions.width, dimensions.height,
-        "decoded-image.png", "Decoded image",
-        `Recovered image · ${dimensions.width} × ${dimensions.height} pixels.`
+        "decoded-image.png", t("result"),
+        caption
     );
-    if (isCurrentView(version)) setStatus("Hidden image decoded.", "success");
+    if (isCurrentView(version)) setStatus(t("imageDecoded"), "success");
 }));
 
 window.addEventListener("pagehide", () => {
     if (downloadUrl) URL.revokeObjectURL(downloadUrl);
 });
 
+// ─── Info Dialog ────────────────────────────────────────────────────────────
+
+const infoDialog = byId("info-dialog");
+const infoToggle = byId("info-toggle");
+const infoClose = byId("info-close");
+const infoTabs = [...document.querySelectorAll(".info-tabs [data-info]")];
+const infoSections = [...document.querySelectorAll(".info-section")];
+
+infoToggle.addEventListener("click", () => {
+    infoDialog.hidden = false;
+    infoToggle.tabIndex = -1;
+    infoClose.focus();
+});
+
+function closeInfoDialog() {
+    infoDialog.hidden = true;
+    infoToggle.tabIndex = 0;
+    infoToggle.focus();
+}
+
+infoClose.addEventListener("click", closeInfoDialog);
+infoDialog.querySelector(".info-backdrop").addEventListener("click", closeInfoDialog);
+
+document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !infoDialog.hidden) closeInfoDialog();
+});
+
+infoTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+        const target = tab.dataset.info;
+        infoTabs.forEach((t) => {
+            const active = t.dataset.info === target;
+            t.classList.toggle("active", active);
+            t.setAttribute("aria-pressed", String(active));
+        });
+        infoSections.forEach((section) => {
+            section.hidden = section.id !== `info-${target}`;
+        });
+    });
+});
+
+// ─── Initialization ─────────────────────────────────────────────────────────
+
+applyTranslations();
 renderMode();

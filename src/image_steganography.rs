@@ -1,19 +1,20 @@
 
 use image::RgbaImage;
 use crate::channel::Channel;
-use crate::lsb::{read_byte, write_byte};
+use crate::lsb::{read_byte, write_byte, read_rgb_byte, write_rgb_byte};
 
-pub const HEADER_PIXELS: usize = 64;
+// Pixels for width and height, 3 bits per pixel (64 bits / 3, rounded up)
+pub const HEADER_PIXELS: usize = 22;
 
 pub fn encode_image(
     secret_image: RgbaImage,
     mut carrier_image: RgbaImage,
 ) -> Result<RgbaImage, String> {
-    // Get the dimensions of the secret image
+    // Secret image dimensions
     let width = secret_image.width();
     let height = secret_image.height();
 
-    // Calculate the number of pixels needed
+    // Pixel count from raw len / 4 (Every pixel has 4 bytes)
     let secret_pixel_count = secret_image.as_raw().len() / 4;
     let required_pixels = HEADER_PIXELS + secret_pixel_count * 8;
     let available_pixels = carrier_image.as_raw().len() / 4;
@@ -22,19 +23,19 @@ pub fn encode_image(
         return Err("Carrier image is too small".to_string());
     }
 
-    // Store the secret image width in the header
+    // Write the width using all RGB channels
     for i in 0..4 {
-        let byte = (width >> (24 - i * 8)) as u8;
-        write_byte(&mut carrier_image, i * 8, byte, Channel::Red)?;
+        // Extract each byte of the width and write it into the image
+        write_rgb_byte(&mut carrier_image, i * 8, (width >> (24 - i * 8)) as u8)?;
     }
 
-    // Store the secret image height in the header
+    // Write the height using all RGB channels
     for i in 0..4 {
-        let byte = (height >> (24 - i * 8)) as u8;
-        write_byte(&mut carrier_image, (i + 4) * 8, byte, Channel::Red)?;
+        // Extract each byte of the height and write it into the image
+        write_rgb_byte(&mut carrier_image, (i + 4) * 8, (height >> (24 - i * 8)) as u8)?;
     }
 
-    // Hide each secret pixel in 8 carrier pixels
+    // Write the secret pixels after the dimensions
     for (i, pixel) in secret_image.pixels().enumerate() {
         let start_index = HEADER_PIXELS + i * 8;
 
@@ -56,28 +57,28 @@ pub fn decode_image(
         return Err("Carrier image is too small to contain a header".to_string());
     }
 
-    // Read the secret image width from the header
+    // Read the width using all RGB channels
     let mut width = 0u32;
 
     for i in 0..4 {
-        let byte = read_byte(&carrier_image, i * 8, Channel::Red)?;
+        let byte = read_rgb_byte(&carrier_image, i * 8)?;
         width = (width << 8) | byte as u32;
     }
 
-    // Read the secret image height from the header
+    // Read the height using all RGB channels
     let mut height = 0u32;
 
     for i in 0..4 {
-        let byte = read_byte(&carrier_image, (i + 4) * 8, Channel::Red)?;
+        let byte = read_rgb_byte(&carrier_image, (i + 4) * 8)?;
         height = (height << 8) | byte as u32;
     }
 
-    // Check whether the dimensions are valid
+    // Check if dimensions are valid
     if width == 0 || height == 0 {
         return Err("Invalid hidden image dimensions".to_string());
     }
 
-    // Check whether the carrier contains enough pixels
+    // Check if the image has enough pixels for the secret
     let secret_pixel_count = (width as usize)
         .checked_mul(height as usize)
         .ok_or("Image dimensions are too large")?;
@@ -91,10 +92,10 @@ pub fn decode_image(
         return Err("Carrier image does not contain a complete hidden image".to_string());
     }
 
-    // Create the image that will hold the decoded pixels
+    // Create the decoded image
     let mut secret_image = RgbaImage::new(width, height);
 
-    // Rebuild each secret pixel from 8 carrier pixels
+    // Read the secret pixels after the dimensions
     for i in 0..secret_pixel_count {
         let start_index = HEADER_PIXELS + i * 8;
 

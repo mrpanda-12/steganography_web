@@ -250,6 +250,10 @@ mod tests {
 
         // Save image after writing the byte
         image.save("modified.png").unwrap();
+
+        // Clean up test artifacts
+        std::fs::remove_file("original.png").ok();
+        std::fs::remove_file("modified.png").ok();
     }
 
 }

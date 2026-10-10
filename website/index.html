@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#111315">
+    <meta name="color-scheme" content="dark light">
+    <title data-i18n="title">Steganography</title>
+
+    <!-- Apply the saved theme and language before the stylesheet loads to avoid a flash. -->
+    <script>
+        (() => {
+            let theme = "dark";
+            try {
+                const savedTheme = localStorage.getItem("steganography-theme-v2");
+                if (savedTheme === "light" || savedTheme === "dark") theme = savedTheme;
+            } catch {
+                // Storage can be unavailable in some browser privacy settings; the page still works.
+            }
+            document.documentElement.dataset.theme = theme;
+
+            // Detect language from browser locale; default to English.
+            let lang = "en";
+            try {
+                const saved = localStorage.getItem("steganography-lang");
+                if (saved === "en" || saved === "de") lang = saved;
+                else {
+                    const browser = (navigator.languages && navigator.languages[0]) || navigator.language || "";
+                    if (browser.startsWith("de")) lang = "de";
+                }
+            } catch {}
+            document.documentElement.lang = lang;
+            document.documentElement.dataset.lang = lang;
+        })();
+    </script>
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="header-top">
+            <a class="wordmark" href="./">Steganography</a>
+            <div class="header-controls">
+                <button id="info-toggle" class="info-toggle" type="button" aria-haspopup="dialog" data-i18n="howItWorks">How it works</button>
+                <!-- Language selector -->
+                <select id="lang-select" class="lang-select" aria-label="Language">
+                    <option value="en">English</option>
+                    <option value="de">Deutsch</option>
+                </select>
+                <!-- This control is deliberately independent of the Rust/WASM module. -->
+                <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">
+                    <span id="theme-icon" aria-hidden="true">☼</span>
+                    <span id="theme-label" data-i18n="themeLight">Light mode</span>
+                </button>
+            </div>
+        </div>
+        <p data-i18n="headerSubtitle">Hide a message or image inside a PNG.</p>
+    </header>
+
+    <main class="workspace">
+        <div id="app">
+            <!-- First select the kind of data: text or image. -->
+            <nav id="tabs" class="tabs" aria-label="Data type">
+                <button type="button" class="tab active" data-mode="text" aria-pressed="true" data-i18n="tabText">Text</button>
+                <button type="button" class="tab" data-mode="image" aria-pressed="false" data-i18n="tabImage">Image</button>
+            </nav>
+
+            <section class="panel">
+                <!-- Then choose whether to hide data or recover it. -->
+                <div class="action-tabs" role="group" aria-label="Encode or decode">
+                    <button type="button" class="action-tab active" data-action="encode" aria-pressed="true" data-i18n="encode">Encode</button>
+                    <button type="button" class="action-tab" data-action="decode" aria-pressed="false" data-i18n="decode">Decode</button>
+                </div>
+
+                <div id="text-encode-panel" class="mode-panel">
+                    <div class="panel-heading">
+                        <p class="eyebrow" data-i18n="eyebrowText">TEXT</p>
+                        <h1 data-i18n="textInImage">Text in an image</h1>
+                        <p class="muted" data-i18n="textEncodeDesc">Choose an image and enter the message to hide inside it.</p>
+                    </div>
+                    <label class="field-label" for="text-encode-carrier"><span data-i18n="carrierImage">Carrier image</span></label>
+                    <input id="text-encode-carrier" class="file-input" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg">
+
+                    <label class="field-label" for="secret-text"><span data-i18n="message">Message</span> <span id="text-capacity" class="capacity-label" data-i18n-placeholder="uploadImage">Upload an image to calculate capacity</span></label>
+                    <textarea id="secret-text" rows="5" data-i18n-placeholder="writeMessage" placeholder="Write your message here…"></textarea>
+
+                    <div class="button-row">
+                        <button id="encode-text" class="button primary operation-button" type="button" data-i18n="encodeMessage">Encode message</button>
+                    </div>
+                </div>
+
+                <div id="text-decode-panel" class="mode-panel" hidden>
+                    <div class="panel-heading">
+                        <p class="eyebrow" data-i18n="eyebrowText">TEXT</p>
+                        <h1 data-i18n="decodeMessage">Decode a message</h1>
+                        <p class="muted" data-i18n="textDecodeDesc">Choose the PNG that contains the hidden message.</p>
+                    </div>
+                    <label class="field-label" for="text-decode-carrier"><span data-i18n="encodedImage">Encoded image</span></label>
+                    <input id="text-decode-carrier" class="file-input" type="file" accept="image/png,.png">
+
+                    <div class="button-row">
+                        <button id="decode-text" class="button primary operation-button" type="button" data-i18n="decodeMessage">Decode message</button>
+                    </div>
+                    <label class="field-label" for="decoded-text"><span data-i18n="decodedMessage">Decoded message</span></label>
+                    <textarea id="decoded-text" rows="5" data-i18n-placeholder="decodedAppears" placeholder="The decoded message will appear here…" readonly></textarea>
+                </div>
+
+                <div id="image-encode-panel" class="mode-panel" hidden>
+                    <div class="panel-heading">
+                        <p class="eyebrow" data-i18n="eyebrowImage">IMAGE</p>
+                        <h1 data-i18n="imageInImage">Image in an image</h1>
+                        <p class="muted" data-i18n="imageEncodeDesc">The carrier holds the secret image. The downloaded result is always a PNG.</p>
+                    </div>
+                    <label class="field-label" for="image-encode-carrier"><span data-i18n="carrierImage">Carrier image</span></label>
+                    <input id="image-encode-carrier" class="file-input" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg">
+
+                    <label class="field-label" for="secret-image"><span data-i18n="secretImage">Secret image</span> <span id="image-capacity" class="capacity-label" data-i18n-placeholder="uploadImage">Upload an image to calculate capacity</span></label>
+                    <input id="secret-image" class="file-input" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg">
+
+                    <label class="check-option" for="scale-secret">
+                        <input id="scale-secret" type="checkbox" checked>
+                        <span><strong data-i18n="scaleDown">Scale down to fit</strong><small data-i18n="scaleDownDesc">Reduce the secret image proportionally only when the carrier cannot hold it.</small></span>
+                    </label>
+
+                    <p id="downscale-warning" class="warning-note" role="alert" hidden>
+                        <strong>⚠ <span data-i18n="warning">Warning</span>:</strong> <span data-i18n="warningDownscale">If the secret image itself was encoded with hidden data (a secret inside a secret), scaling it down will destroy that nested secret because the LSB bits are altered during resizing.</span>
+                    </p>
+
+                    <p class="warning-note" role="alert">
+                        <strong>⚠ <span data-i18n="warning">Warning</span>:</strong> <span data-i18n="warningDesc">If the carrier image already contains a hidden secret, encoding new data will overwrite and destroy that existing secret. The carrier must be a clean image.</span>
+                    </p>
+
+                    <div class="button-row">
+                        <button id="encode-image" class="button primary operation-button" type="button" data-i18n="encodeImage">Encode image</button>
+                    </div>
+                </div>
+
+                <div id="image-decode-panel" class="mode-panel" hidden>
+                    <div class="panel-heading">
+                        <p class="eyebrow" data-i18n="eyebrowImage">IMAGE</p>
+                        <h1 data-i18n="decodeImage">Decode an image</h1>
+                        <p class="muted" data-i18n="imageDecodeDesc">Choose the encoded carrier PNG to recover its hidden image.</p>
+                    </div>
+                    <label class="field-label" for="image-decode-carrier"><span data-i18n="encodedImage">Encoded image</span></label>
+                    <input id="image-decode-carrier" class="file-input" type="file" accept="image/png,.png">
+
+                    <div class="button-row">
+                        <button id="decode-image" class="button primary operation-button" type="button" data-i18n="decodeImage">Decode image</button>
+                    </div>
+                </div>
+
+                <p id="status" class="status" role="status" aria-live="polite" data-i18n="chooseImage">Choose an image to get started.</p>
+
+                <!-- Hidden until an image has been encoded or extracted. Text output has its own field above. -->
+                <section id="result" class="result" aria-labelledby="result-title" hidden>
+                    <div class="result-heading">
+                        <h2 id="result-title" data-i18n="result">Result</h2>
+                        <a id="download" class="download-link" hidden download="steganography-result.png" data-i18n="download">Download</a>
+                    </div>
+                    <canvas id="preview" aria-label="Result image preview"></canvas>
+                    <p id="result-caption" class="muted result-caption"></p>
+                </section>
+            </section>
+        </div>
+    </main>
+
+    <!-- Information dialog -->
+    <div id="info-dialog" class="info-dialog" role="dialog" aria-modal="true" aria-labelledby="info-dialog-title" hidden>
+        <div class="info-backdrop"></div>
+        <div class="info-card">
+            <div class="info-card-header">
+                <h2 id="info-dialog-title" data-i18n="infoTitle">How Steganography Works</h2>
+                <button id="info-close" class="info-close" type="button" aria-label="Close">✕</button>
+            </div>
+
+            <nav class="info-tabs" aria-label="Info sections">
+                <button type="button" class="info-tab active" data-info="general" aria-pressed="true" data-i18n="infoGeneral">General</button>
+                <button type="button" class="info-tab" data-info="text" aria-pressed="false" data-i18n="infoText">Text mode</button>
+                <button type="button" class="info-tab" data-info="image" aria-pressed="false" data-i18n="infoImage">Image mode</button>
+            </nav>
+
+            <div class="info-body">
+                <div id="info-general" class="info-section">
+                    <h3 data-i18n="infoWhatIs">What is steganography?</h3>
+                    <p data-i18n="infoWhatIsDesc">Steganography hides data inside a normal-looking image by tweaking the least significant bits of each pixel's color. The changes are too small to see, so the picture looks the same, but you can extract the hidden data later.</p>
+                    <h3 data-i18n="infoWhyPng">Why PNG?</h3>
+                    <p data-i18n="infoWhyPngDesc">The encoded image must be saved as <strong>PNG</strong>. JPEG and similar formats compress the image in ways that destroy the hidden bits. PNG keeps every pixel exactly as it is.</p>
+                    <h3 data-i18n="infoCarrierCapacity">How much can you hide?</h3>
+                    <p data-i18n="infoCarrierCapacityDesc">It depends on the carrier image size. Bigger images hold more data. A 1920 × 1080 photo has over 2 million pixels, which is enough for several hundred kilobytes of text.</p>
+                </div>
+
+                <div id="info-text" class="info-section" hidden>
+                    <h3 data-i18n="infoEncodingText">How text encoding works</h3>
+                    <p data-i18n="infoEncodingTextDesc">Each pixel stores <strong>3 bits</strong> of data (one per color channel). The first 32 bits store the message length, and the rest carry the actual text as UTF-8.</p>
+                    <h3 data-i18n="infoCapacityFormula">Capacity</h3>
+                    <p data-i18n="infoCapacityFormulaDesc">Max text = (pixels × 3 − 32) ÷ 8 bytes. For example, a 100 × 100 image can hold about 3 747 bytes.</p>
+                    <h3 data-i18n="infoDecodingText">How decoding works</h3>
+                    <p data-i18n="infoDecodingTextDesc">The decoder reads the first 32 bits to find out how long the message is, then extracts the text from the pixel bits.</p>
+                </div>
+
+                <div id="info-image" class="info-section" hidden>
+                    <h3 data-i18n="infoEncodingImage">How image encoding works</h3>
+                    <p data-i18n="infoEncodingImageDesc">The secret image's dimensions are stored in the first <strong>64 pixels</strong> of the carrier. Then each pixel of the secret image takes <strong>8 carrier pixels</strong> to store its color values. Only RGB values are embedded; the alpha channel is not stored.</p>
+                    <h3 data-i18n="infoCapacityFormula">Capacity</h3>
+                    <p data-i18n="infoCapacityFormulaImageDesc">Max secret pixels = (carrier pixels − 64) ÷ 8. A 1920 × 1080 carrier can hold a secret image up to about 259 136 pixels (roughly 509 × 509).</p>
+                    <h3 data-i18n="infoScaling">Scaling</h3>
+                    <p data-i18n="infoScalingDesc">If the secret image is too big, <em>Scale down to fit</em> shrinks it until it fits. The recovered image will be smaller than the original.</p>
+                    <h3 data-i18n="infoSecretInSecret">Overwriting secrets</h3>
+                    <p data-i18n="infoSecretInSecretDesc">Encoding into an image that already has hidden data will overwrite it. The old secret is gone. Also, if you scale down a secret image that itself contains hidden data, that data will be lost too. Always use a clean image as your carrier.</p>
+                    <h3 data-i18n="infoLimitations">Limitations</h3>
+                    <p data-i18n="infoLimitationsDesc">The alpha channel (transparency) of the secret image is not preserved. The extracted image will always be fully opaque. Support for transparency may be added in a future version.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Keep theme and language switching separate from the WASM module. -->
+    <script>
+        (() => {
+            const root = document.documentElement;
+            const toggle = document.getElementById("theme-toggle");
+            const icon = document.getElementById("theme-icon");
+            const label = document.getElementById("theme-label");
+            const themeColor = document.querySelector('meta[name="theme-color"]');
+            const langSelect = document.getElementById("lang-select");
+
+            // Theme labels in both languages
+            const themeLabels = {
+                en: { light: "Light mode", dark: "Dark mode" },
+                de: { light: "Heller Modus", dark: "Dunkler Modus" }
+            };
+
+            function getLang() {
+                return root.dataset.lang || "en";
+            }
+
+            function applyTheme(theme) {
+                const dark = theme === "dark";
+                root.dataset.theme = theme;
+                icon.textContent = dark ? "☼" : "☾";
+                const lang = getLang();
+                label.textContent = themeLabels[lang][dark ? "light" : "dark"];
+                toggle.setAttribute("aria-pressed", String(dark));
+                if (themeColor) themeColor.content = dark ? "#111315" : "#f7f7f4";
+            }
+
+            applyTheme(root.dataset.theme === "light" ? "light" : "dark");
+            toggle.addEventListener("click", () => {
+                const nextTheme = root.dataset.theme === "dark" ? "light" : "dark";
+                applyTheme(nextTheme);
+                try {
+                    localStorage.setItem("steganography-theme-v2", nextTheme);
+                } catch {}
+            });
+
+            // Set language selector to match detected/saved language
+            if (langSelect) {
+                langSelect.value = getLang();
+            }
+        })();
+    </script>
+    <script type="module" src="./app.js"></script>
+</body>
+</html>
