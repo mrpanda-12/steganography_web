@@ -13,12 +13,20 @@ pub fn encode_image(
     // Secret image dimensions
     let width = secret_image.width();
     let height = secret_image.height();
-
-    // Pixel count from raw len / 4 (Every pixel has 4 bytes)
+    
+    // Calculate the number of pixels in the secret image
     let secret_pixel_count = secret_image.as_raw().len() / 4;
-    let required_pixels = HEADER_PIXELS + secret_pixel_count * 8;
+
+    // Calculate the required pixels, including the header
+    let required_pixels = secret_pixel_count
+        .checked_mul(8)
+        .and_then(|count| count.checked_add(HEADER_PIXELS))
+        .ok_or("Image dimensions are too large")?;
+
+    // Calculate the available pixels in the carrier image
     let available_pixels = carrier_image.as_raw().len() / 4;
 
+    // Check if the carrier image has enough space
     if required_pixels > available_pixels {
         return Err("Carrier image is too small".to_string());
     }
